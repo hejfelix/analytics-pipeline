@@ -1,0 +1,11 @@
+version: '2'
+services:
+  kafkaAndZookeeper:
+    image: 'spotify/kafka:latest'
+    ports:
+      - '2181:2181'
+      - '9092:9092'
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+      - ADVERTISED_HOST=0.0.0.0
+      - ADVERTISED_PORT=9092
