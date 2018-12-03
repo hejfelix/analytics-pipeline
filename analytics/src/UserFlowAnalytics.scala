@@ -1,24 +1,27 @@
 import java.time.Instant
 import java.util.UUID
 
-import models.{ActionEvent, Event}
+import models.{ActionEvent, Event, UserId}
 import org.apache.spark.streaming.dstream.DStream
 
 case class UserFlowAnalytics() {
 
-  val setup = (events: DStream[Event]) => {
+  val setup = (actionEvents: DStream[(UserId, ActionEvent)]) => {
     //Key for timestamps
     val timestamp: String = "timestamp"
     //Key for event IDs
     val eventId: String = "eventId"
 
-    val actionEvents: DStream[ActionEvent] = events.transform(_.collect {
-      case ae: ActionEvent => ae
-    })
-
-    val groupedByUser: DStream[(UUID, Iterable[ActionEvent])] =
+    /**
+      * Spark does runtime reflection for serialization, so we can't use
+      * newtypes as keys here.
+      */
+    val groupedByUser: DStream[(UUID, List[ActionEvent])] =
       actionEvents
-        .transform(_.groupBy(_.userId.id))
+        .map {
+          case (id, event) => id.id -> List(event)
+        }
+        .reduceByKey(_ ++ _)
 
     val states: DStream[(UUID, Map[ActionEvent, Map[ActionEvent, Double]])] =
       groupedByUser.mapValues(analyzeFlows)
@@ -42,10 +45,10 @@ case class UserFlowAnalytics() {
     * @param events Key-Value descriptions of each event. All events contain 'timestamp' keys.
     * @return A DStream with transitions by state
     */
-  lazy val analyzeFlows: Iterable[ActionEvent] => Map[ActionEvent, Map[ActionEvent, Double]] = events => {
+  lazy val analyzeFlows: List[ActionEvent] => Map[ActionEvent, Map[ActionEvent, Double]] = events => {
 
     val chronological: List[ActionEvent] =
-      events.toList.sortBy(_.timeStamp.getOrElse(Instant.MIN))(Ordering[Instant].reverse)
+      events.sortBy(_.timeStamp.getOrElse(Instant.MIN))(Ordering[Instant].reverse)
 
     val transitions: List[(ActionEvent, ActionEvent)] = chronological.zip(chronological.drop(1))
 

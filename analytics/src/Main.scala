@@ -1,19 +1,10 @@
-import akka.actor.ActorSystem
-import akka.stream.ActorMaterializer
-import models.Event
+import models.{ActionEvent, Event}
+import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.apache.spark.SparkConf
-import org.apache.spark.streaming.dstream.DStream
+import org.apache.spark.streaming.dstream.{DStream, InputDStream}
 import org.apache.spark.streaming.{Duration, Seconds, StreamingContext}
 
 object Main extends App {
-
-  private val log = org.apache.log4j.Logger.getLogger(this.getClass)
-
-  private implicit val sys = ActorSystem("analytics")
-  private implicit val mat = ActorMaterializer()
-  private implicit val ec  = sys.dispatcher
-
-  private val restReceiver = RestReceiver()
 
   val applicationName: String       = "UserFlowAnalytics"
   val masterConfiguration: String   = "local[2]"
@@ -23,8 +14,11 @@ object Main extends App {
 
   val conf: SparkConf       = new SparkConf().setAppName(applicationName).setMaster(masterConfiguration)
   val ssc: StreamingContext = new StreamingContext(conf, batchInterval)
-  val events: DStream[Event] =
-    ssc.receiverStream(restReceiver).window(windowSizeInSeconds, intervalInSeconds)
+  val kafkaConsumer         = new KafkaConsumer("0.0.0.0:9092", "test", ssc)
+  val events: DStream[(models.UserId, ActionEvent)] =
+    kafkaConsumer.stream.window(windowSizeInSeconds, intervalInSeconds)
+
+  //    ssc.receiverStream(restReceiver).window(windowSizeInSeconds, intervalInSeconds)
 
   val analytics = UserFlowAnalytics()
 
