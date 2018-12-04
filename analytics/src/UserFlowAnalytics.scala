@@ -1,12 +1,12 @@
 import java.time.Instant
 import java.util.UUID
 
-import models.{ActionEvent, Event, UserId}
+import models.{ActionEvent, UserId}
 import org.apache.spark.streaming.dstream.DStream
 
 case class UserFlowAnalytics() {
 
-  val setup = (actionEvents: DStream[(UserId, ActionEvent)]) => {
+  val setup: DStream[(UserId, ActionEvent)] => Unit = actionEvents => {
     //Key for timestamps
     val timestamp: String = "timestamp"
     //Key for event IDs
@@ -27,15 +27,84 @@ case class UserFlowAnalytics() {
       groupedByUser.mapValues(analyzeFlows)
 
 //    states.foreachRDD(_.foreach(visualize))
-    states.mapValues(pretty).print
+//    states.mapValues(pretty).print
+    val dumbMaps: DStream[(UUID, Map[String, Map[String, Double]])] = states.mapValues(stateMachine =>
+      stateMachine.map {
+        case (key, value) =>
+          key.eventName -> value.map {
+            case (key, value) => key.eventName -> value
+          }
+    })
+
+    dumbMaps.foreachRDD { (rdd, time) =>
+      val num      = 10
+      val firstNum = rdd.take(num + 1)
+      println("-------------------------------------------")
+      println(s"Time: ${Instant.ofEpochMilli(time.milliseconds)}")
+      println("-------------------------------------------")
+      firstNum.take(num).foreach {
+        case (id, stateMachine) =>
+          println(s"$id:\n${pretty(stateMachine)}")
+          println()
+          println(s"Most probable flow: ${mostLikelyFlow(stateMachine)(steps = 10)}")
+      }
+
+      if (firstNum.length > num) println("...")
+      println()
+
+    }
+//
+//  .foreachRDD { (rdd: RDD[(UUID, Map[ActionEvent, Map[ActionEvent, Double]])], time: Time) =>
+//      {
+//        val num = 10
+//        val firstNum = rdd.take(num + 1).map {
+//          case (id, stateMachine) => (id, (stateMachine, pretty(stateMachine)))
+//        }
+//        println("-------------------------------------------")
+//        println(s"Time: ${Instant.ofEpochMilli(time.milliseconds)}")
+//        println("-------------------------------------------")
+//        firstNum.take(num).foreach {
+//          case (id, (stateMachine, prettyStateMachine)) =>
+//            println(s"$id:\n$prettyStateMachine")
+//            println()
+////            println(s"Most probable flow: ${mostLikelyFlow(None)(stateMachine.map {
+////              case (state, propMap) => state.eventName -> propMap
+////            })(steps = 10)}")
+//        }
+//
+//        if (firstNum.length > num) println("...")
+//        println()
+//      }
+
 //  states.map(map => mostLikelyFlow(None)(map)(steps = 10)).print
   }
 
-  private lazy val pretty: Map[ActionEvent, Map[ActionEvent, Double]] => String =
+  /**
+    * Given a probabilistic state machine, a list of most probable state transitions is given
+    *
+    * @param startState "" for entry state, otherwise the seed state of the computation
+    * @param states The probabilistic state map
+    * @param steps  The number of steps to produce
+    * @return The most likely flow for n steps, ties broken arbitrarily but consistently
+    */
+  def mostLikelyFlow(states: Map[String, Map[String, Double]])(steps: Int): List[String] = {
+    val result = Stream
+      .iterate(List.empty[String], steps) {
+        case Nil if states.nonEmpty => List(states.head._1)
+        case currentResult @ x :: _ if states.contains(x) =>
+          val mostLikelyNextState = states(x).maxBy { case (_, frequency) => frequency }._1
+          mostLikelyNextState :: currentResult
+        case x => x
+      }
+      .takeWhile(xs => xs.distinct.sorted == xs.sorted) //no cycles
+      .toList
+    result.lastOption.getOrElse(Nil)
+  }
+  private lazy val pretty: Map[String, Map[String, Double]] => String =
     _.map {
       case (from, tos) =>
-        from.eventName -> tos.map {
-          case (choice, probability) => s"${choice.eventName}~${probability}"
+        from -> tos.map {
+          case (choice, probability) => s"$choice~$probability"
         }
     }.mkString("\n")
 
@@ -57,26 +126,6 @@ case class UserFlowAnalytics() {
 
     transitionByState
   }
-
-  /**
-    * Given a probabilistic state machine, a list of most probable state transitions is given
-    *
-    * @param startState "" for entry state, otherwise the seed state of the computation
-    * @param states The probabilistic state map
-    * @param steps  The number of steps to produce
-    * @return The most likely flow for n steps, ties broken arbitrarily but consistently
-    */
-  def mostLikelyFlow(startState: Option[Event])(states: Map[Event, Map[Event, Double]])(steps: Int): List[Event] =
-    startState match {
-      case Some(start) if states.isEmpty || steps == 0 || !states.contains(start) => Nil
-      case None if states.nonEmpty =>
-        val start                           = states.keys.head
-        val (mostLikelyNextState: Event, _) = states(start).toList.minBy { case (_, probability) => probability }
-        start :: mostLikelyFlow(Option(mostLikelyNextState))(states)(steps - 1)
-      case Some(start) =>
-        val (mostLikelyNextState: Event, _) = states(start).toList.minBy { case (_, probability) => probability }
-        start :: mostLikelyFlow(Option(mostLikelyNextState))(states)(steps - 1)
-    }
 
   /**
     * Groups transitions by their event IDs

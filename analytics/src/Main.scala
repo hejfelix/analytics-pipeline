@@ -1,7 +1,6 @@
-import models.{ActionEvent, Event}
-import org.apache.kafka.clients.consumer.ConsumerRecord
+import models.ActionEvent
 import org.apache.spark.SparkConf
-import org.apache.spark.streaming.dstream.{DStream, InputDStream}
+import org.apache.spark.streaming.dstream.DStream
 import org.apache.spark.streaming.{Duration, Seconds, StreamingContext}
 
 object Main extends App {
