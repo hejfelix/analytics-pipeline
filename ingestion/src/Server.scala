@@ -1,6 +1,3 @@
-import java.nio.charset.StandardCharsets
-import java.util
-
 import akka.actor.ActorSystem
 import akka.http.javadsl.common.{EntityStreamingSupport, JsonEntityStreamingSupport}
 import akka.http.scaladsl.Http
@@ -13,11 +10,8 @@ import akka.stream.scaladsl.{Sink, Source}
 import akka.{Done, NotUsed}
 import io.circe.generic.auto._
 import io.circe.java8.time._
-import io.circe.syntax._
-import models.ActionEvent
+import models.{ActionEvent, _}
 import org.apache.kafka.clients.producer.ProducerRecord
-import org.apache.kafka.common.serialization.Serializer
-import models._
 
 import scala.concurrent.duration._
 import scala.concurrent.{Await, ExecutionContextExecutor, Future}
@@ -27,22 +21,7 @@ object Server extends App {
   private implicit val mat: ActorMaterializer       = ActorMaterializer()
   private implicit val ec: ExecutionContextExecutor = system.dispatcher
   private val bootstrapServers                      = "0.0.0.0:9092"
-  private val charSet                               = StandardCharsets.UTF_8
   private val topic                                 = "test"
-
-//  private val keySerializer = new Serializer[ActionEvent] {
-//    override def configure(configs: util.Map[String, _], isKey: Boolean): Unit = {}
-//    override def serialize(topic: String, data: ActionEvent): Array[Byte] =
-//      data.userId.id.toString.getBytes(charSet)
-//    override def close(): Unit = {}
-//  }
-//  private val valueSerializer = new Serializer[ActionEvent] {
-//    override def configure(configs: util.Map[String, _], isKey: Boolean): Unit = {}
-//    override def serialize(topic: String, data: ActionEvent): Array[Byte]      = data.asJson.noSpaces.getBytes(charSet)
-//    override def close(): Unit                                                 = {}
-//  }
-
-  println("Starting...")
 
   private val producerSettings: ProducerSettings[ActionEvent, ActionEvent] =
     ProducerSettings(system, keySerializer, valueSerializer)
