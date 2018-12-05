@@ -7,10 +7,6 @@ import org.apache.spark.streaming.dstream.DStream
 case class UserFlowAnalytics() {
 
   val setup: DStream[(UserId, ActionEvent)] => Unit = actionEvents => {
-    //Key for timestamps
-    val timestamp: String = "timestamp"
-    //Key for event IDs
-    val eventId: String = "eventId"
 
     /**
       * Spark does runtime reflection for serialization, so we can't use
@@ -26,8 +22,6 @@ case class UserFlowAnalytics() {
     val states: DStream[(UUID, Map[ActionEvent, Map[ActionEvent, Double]])] =
       groupedByUser.mapValues(analyzeFlows)
 
-//    states.foreachRDD(_.foreach(visualize))
-//    states.mapValues(pretty).print
     val dumbMaps: DStream[(UUID, Map[String, Map[String, Double]])] = states.mapValues(stateMachine =>
       stateMachine.map {
         case (key, value) =>
@@ -46,43 +40,38 @@ case class UserFlowAnalytics() {
         case (id, stateMachine) =>
           println(s"$id:\n${pretty(stateMachine)}")
           println()
+          println(s"Initial state: ${initialState(stateMachine)}")
           println(s"Most probable flow: ${mostLikelyFlow(stateMachine)(steps = 10)}")
+          println(s"Most uncertain junction: ${mostUncertainJunction(stateMachine)}")
       }
 
       if (firstNum.length > num) println("...")
       println()
 
     }
-//
-//  .foreachRDD { (rdd: RDD[(UUID, Map[ActionEvent, Map[ActionEvent, Double]])], time: Time) =>
-//      {
-//        val num = 10
-//        val firstNum = rdd.take(num + 1).map {
-//          case (id, stateMachine) => (id, (stateMachine, pretty(stateMachine)))
-//        }
-//        println("-------------------------------------------")
-//        println(s"Time: ${Instant.ofEpochMilli(time.milliseconds)}")
-//        println("-------------------------------------------")
-//        firstNum.take(num).foreach {
-//          case (id, (stateMachine, prettyStateMachine)) =>
-//            println(s"$id:\n$prettyStateMachine")
-//            println()
-////            println(s"Most probable flow: ${mostLikelyFlow(None)(stateMachine.map {
-////              case (state, propMap) => state.eventName -> propMap
-////            })(steps = 10)}")
-//        }
-//
-//        if (firstNum.length > num) println("...")
-//        println()
-//      }
+  }
 
-//  states.map(map => mostLikelyFlow(None)(map)(steps = 10)).print
+  private def mostUncertainJunction(states: Map[String, Map[String, Double]]): Option[(String, Map[String, Double])] =
+    if (states.isEmpty) {
+      None
+    } else {
+      Option(states.maxBy {
+        case (_, transitions) =>
+          val biggestNumberOfEquallyValidChoices: (Double, Int) =
+            transitions.toList.groupBy { case (_, frequency) => frequency }.mapValues(_.length).maxBy(_._2)
+          biggestNumberOfEquallyValidChoices._2
+      })
+    }
+
+  private def initialState(states: Map[String, Map[String, Double]]): Option[String] = {
+    val incomingArrows: Set[String]                  = states.values.flatMap(_.keys).toSet
+    val statesWithNoIncomingArrows: Iterable[String] = states.keys.filterNot(incomingArrows.contains)
+    statesWithNoIncomingArrows.headOption
   }
 
   /**
     * Given a probabilistic state machine, a list of most probable state transitions is given
     *
-    * @param startState "" for entry state, otherwise the seed state of the computation
     * @param states The probabilistic state map
     * @param steps  The number of steps to produce
     * @return The most likely flow for n steps, ties broken arbitrarily but consistently
@@ -90,7 +79,7 @@ case class UserFlowAnalytics() {
   def mostLikelyFlow(states: Map[String, Map[String, Double]])(steps: Int): List[String] = {
     val result = Stream
       .iterate(List.empty[String], steps) {
-        case Nil if states.nonEmpty => List(states.head._1)
+        case Nil if states.nonEmpty => initialState(states).toList
         case currentResult @ x :: _ if states.contains(x) =>
           val mostLikelyNextState = states(x).maxBy { case (_, frequency) => frequency }._1
           mostLikelyNextState :: currentResult
@@ -98,8 +87,9 @@ case class UserFlowAnalytics() {
       }
       .takeWhile(xs => xs.distinct.sorted == xs.sorted) //no cycles
       .toList
-    result.lastOption.getOrElse(Nil)
+    result.lastOption.getOrElse(Nil).reverse
   }
+
   private lazy val pretty: Map[String, Map[String, Double]] => String =
     _.map {
       case (from, tos) =>
@@ -110,14 +100,11 @@ case class UserFlowAnalytics() {
 
   /**
     * Analyzes an event stream as user flows (distribution of user flows in application)
-    *
-    * @param events Key-Value descriptions of each event. All events contain 'timestamp' keys.
-    * @return A DStream with transitions by state
     */
   lazy val analyzeFlows: List[ActionEvent] => Map[ActionEvent, Map[ActionEvent, Double]] = events => {
 
     val chronological: List[ActionEvent] =
-      events.sortBy(_.timeStamp.getOrElse(Instant.MIN))(Ordering[Instant].reverse)
+      events.sortBy(_.timeStamp.getOrElse(Instant.MIN))
 
     val transitions: List[(ActionEvent, ActionEvent)] = chronological.zip(chronological.drop(1))
 
@@ -135,15 +122,12 @@ case class UserFlowAnalytics() {
     */
   lazy val groupTransitionsByEventID: List[(ActionEvent, ActionEvent)] => Map[ActionEvent, List[ActionEvent]] =
     _.groupBy {
-      case (origin: ActionEvent, _) => origin: ActionEvent
+      case (origin: ActionEvent, _) => origin.copy(timeStamp = None)
     }.mapValues(_.collect { case (_, target) => target })
-//    transitions.groupBy(_._1).mapValues(_.map(_._2))
 
   /**
     * Create a frequency map from a list of elements
     *
-    * @param xs The list for which to create the frequency map
-    * @tparam T The type of elements in the list
     * @return A key->frequency map derived from xs
     */
   lazy val frequencyMap: List[ActionEvent] => Map[ActionEvent, Double] = xs =>
