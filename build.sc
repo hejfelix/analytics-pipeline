@@ -4,15 +4,16 @@ import mill.util.Loose
 import scalalib._
 
 object V {
-    val spark         = "2.3.1"
     val akka          = "2.5.18"
     val akkaHttp      = "10.1.5"
-    val frameless     = "0.7.0"
     val akkaHttpCirce = "1.22.0"
-    val circe         = "0.10.0"
-    val newtype       = "0.4.2"
     val alpakkaKafka  = "1.0-M1"
+    val cats          = "1.5.0"
+    val circe         = "0.10.0"
+    val frameless     = "0.7.0"
     val kafkaClients  = "2.0.0"
+    val newtype       = "0.4.2"
+    val spark         = "2.3.1"
   }
 
 val scala212 = "2.12.7"
@@ -56,7 +57,8 @@ val scalac211Flags =
       "-Ywarn-nullary-override", // Warn when non-nullary `def f()' overrides nullary `def f'.
       "-Ywarn-nullary-unit", // Warn when nullary methods return Unit.
       "-Ywarn-numeric-widen", // Warn when numerics are widened.
-      "-Ywarn-value-discard" // Warn when non-Unit expression results are unused.
+      "-Ywarn-value-discard", // Warn when non-Unit expression results are unused.
+      "-Ypartial-unification"
     )
 
 val scalac212Flags = Seq(
@@ -124,6 +126,7 @@ object analytics extends ScalaModule {
       ivy"io.circe::circe-generic:${V.circe}",
       ivy"io.circe::circe-parser:${V.circe}",
       ivy"io.circe::circe-java8:${V.circe}",
+      ivy"org.typelevel::cats-core:${V.cats}",
       ivy"org.apache.spark::spark-streaming-kafka-0-10:${V.spark}"
     )
 

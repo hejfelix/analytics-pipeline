@@ -1,10 +1,19 @@
 import java.time.Instant
 import java.util.UUID
 
+import cats.Bifunctor
+import cats.implicits._
 import models.{ActionEvent, UserId}
 import org.apache.spark.streaming.dstream.DStream
 
 case class UserFlowAnalytics() {
+
+  implicit def mapBiFunctor[K, V]: Bifunctor[Map] = new Bifunctor[Map] {
+    override def bimap[A, B, C, D](fab: Map[A, B])(f: A => C, g: B => D): Map[C, D] =
+      fab.map {
+        case (key, value) => f(key) -> g(value)
+      }
+  }
 
   val setup: DStream[(UserId, ActionEvent)] => Unit = actionEvents => {
 
@@ -22,13 +31,8 @@ case class UserFlowAnalytics() {
     val states: DStream[(UUID, Map[ActionEvent, Map[ActionEvent, Double]])] =
       groupedByUser.mapValues(analyzeFlows)
 
-    val dumbMaps: DStream[(UUID, Map[String, Map[String, Double]])] = states.mapValues(stateMachine =>
-      stateMachine.map {
-        case (key, value) =>
-          key.eventName -> value.map {
-            case (key, value) => key.eventName -> value
-          }
-    })
+    val dumbMaps: DStream[(UUID, Map[String, Map[String, Double]])] =
+      states.mapValues(_.bimap(_.eventName, _.leftMap(_.eventName)))
 
     dumbMaps.foreachRDD { (rdd, time) =>
       val num      = 10
@@ -43,6 +47,7 @@ case class UserFlowAnalytics() {
           println(s"Initial state: ${initialState(stateMachine)}")
           println(s"Most probable flow: ${mostLikelyFlow(stateMachine)(steps = 10)}")
           println(s"Most uncertain junction: ${mostUncertainJunction(stateMachine)}")
+          println(s"Longest certain flow: ${longestCertainChain(stateMachine)(maxSteps = 10)}")
       }
 
       if (firstNum.length > num) println("...")
@@ -50,6 +55,27 @@ case class UserFlowAnalytics() {
 
     }
   }
+
+  def longestCertainChain(stateMachine: Map[String, Map[String, Double]])(maxSteps: Int): List[String] =
+    if (stateMachine.isEmpty) Nil
+    else {
+      val chains = stateMachine.keys
+        .flatMap(
+          state => combinations(state, stateMachine)(maxSteps).map(state :: _)
+        )
+        .toList
+      if (chains.isEmpty) Nil else chains.maxBy(_.length)
+    }
+
+  def combinations(start: String, stateMachine: Map[String, Map[String, Double]])(maxSteps: Int): List[List[String]] =
+    if (maxSteps == 0 || stateMachine.get(start).isEmpty || stateMachine(start).isEmpty) {
+      List(List())
+    } else {
+      (for {
+        (next, freq) <- stateMachine(start) if freq == 1d
+        rest         <- combinations(next, stateMachine)(maxSteps - 1)
+      } yield next :: rest).toList
+    }
 
   private def mostUncertainJunction(states: Map[String, Map[String, Double]]): Option[(String, Map[String, Double])] =
     if (states.isEmpty) {
@@ -76,8 +102,8 @@ case class UserFlowAnalytics() {
     * @param steps  The number of steps to produce
     * @return The most likely flow for n steps, ties broken arbitrarily but consistently
     */
-  def mostLikelyFlow(states: Map[String, Map[String, Double]])(steps: Int): List[String] = {
-    val result = Stream
+  def mostLikelyFlow(states: Map[String, Map[String, Double]])(steps: Int): List[String] =
+    Stream
       .iterate(List.empty[String], steps) {
         case Nil if states.nonEmpty => initialState(states).toList
         case currentResult @ x :: _ if states.contains(x) =>
@@ -87,8 +113,9 @@ case class UserFlowAnalytics() {
       }
       .takeWhile(xs => xs.distinct.sorted == xs.sorted) //no cycles
       .toList
-    result.lastOption.getOrElse(Nil).reverse
-  }
+      .lastOption
+      .getOrElse(Nil)
+      .reverse
 
   private lazy val pretty: Map[String, Map[String, Double]] => String =
     _.map {
